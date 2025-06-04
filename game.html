@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mining Game</title>
+<style>
+  body {
+    margin: 0;
+    background: #222;
+    color: #eee;
+    font-family: Arial, sans-serif;
+    user-select: none;
+  }
+  #discordLink {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    background: rgba(0,0,0,0.7);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 14px;
+    z-index: 1000;
+  }
+  #discordLink a {
+    color: #7289da;
+    text-decoration: none;
+    font-weight: bold;
+  }
+  #discordLink a:hover {
+    text-decoration: underline;
+  }
+  #game {
+    display: block;
+    background: #333;
+    margin: 20px auto;
+    border: 2px solid #555;
+  }
+  #inventory, #messages {
+    text-align: center;
+    margin: 5px;
+  }
+  button {
+    margin: 5px;
+    padding: 6px 12px;
+    font-size: 14px;
+  }
+  #buttons {
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div id="discordLink">
+  Discord link: <a href="https://discord.gg/m6atea6y" target="_blank" rel="noopener noreferrer">https://discord.gg/m6atea6y</a>
+</div>
+
+<canvas id="game" width="640" height="480"></canvas>
+<div id="inventory">Empty</div>
+<div id="messages"></div>
+<div id="buttons">
+  <button id="craftSwordBtn">Craft Sword (5 Ore)</button>
+  <button id="craftAxeBtn">Craft Axe (3 Wood)</button>
+  <button id="craftPickaxeBtn">Craft Pickaxe (3 Wood)</button>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const inventoryEl = document.getElementById('inventory');
+  const messagesEl = document.getElementById('messages');
+  const craftSwordBtn = document.getElementById('craftSwordBtn');
+  const craftAxeBtn = document.getElementById('craftAxeBtn');
+  const craftPickaxeBtn = document.getElementById('craftPickaxeBtn');
+
+  const TILE_SIZE = 40;
+  const COLS = Math.floor(canvas.width / TILE_SIZE);
+  const ROWS = Math.floor(canvas.height / TILE_SIZE);
+
+  const player = {
+    x: Math.floor(COLS / 2),
+    y: Math.floor(ROWS / 2),
+    animX: 0,
+    animY: 0,
+    animProgress: 0,
+    animSpeed: 4,
+    weapon: null,
+    tool: null,
+    frame: 0,
+    movingProgress: 0,
+    movingFrom: null,
+    movingTo: null,
+    slashing: false,
+    isPunching: false
+  };
+
+  const inventory = {
+    ore: 0,
+    wood: 0,
+    sword: 0,
+    axe: 0,
+    pickaxe: 0
+  };
+
+  const orePositions = [];
+  const treePositions = [];
+
+  let resourcesMinedSinceLastSpawn = 0;
+
+  function addMessage(msg) {
+    messagesEl.textContent = msg;
+  }
+
+  function updateInventoryUI() {
+    const items = [];
+    for (let k in inventory) {
+      if (inventory[k] > 0) items.push(`${k} x${inventory[k]}`);
+    }
+    inventoryEl.textContent = items.join(', ') || 'Empty';
+  }
+
+  function spawnOres(count) {
+    while (orePositions.length < count) {
+      const x = Math.floor(Math.random() * COLS);
+      const y = Math.floor(Math.random() * ROWS);
+      if ((x === player.x && y === player.y) ||
+          orePositions.some(o => o.x === x && o.y === y) ||
+          treePositions.some(t => t.x === x && t.y === y)) continue;
+      orePositions.push({ x, y });
+    }
+  }
+
+  function spawnTrees(count) {
+    while (treePositions.length < count) {
+      const x = Math.floor(Math.random() * COLS);
+      const y = Math.floor(Math.random() * ROWS);
+      if ((x === player.x && y === player.y) ||
+          orePositions.some(o => o.x === x && o.y === y) ||
+          treePositions.some(t => t.x === x && t.y === y)) continue;
+      treePositions.push({ x, y, health: 3 });
+    }
+  }
+
+  function drawTerrain() {
+    ctx.fillStyle = '#445522';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  function drawRocks() {
+    ctx.fillStyle = '#666666';
+    orePositions.forEach(ore => {
+      const px = ore.x * TILE_SIZE + TILE_SIZE / 2;
+      const py = ore.y * TILE_SIZE + TILE_SIZE / 2;
+      ctx.beginPath();
+      ctx.arc(px, py, 15, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  function drawTrees() {
+    treePositions.forEach(tree => {
+      const px = tree.x * TILE_SIZE + TILE_SIZE / 2;
+      const py = tree.y * TILE_SIZE + TILE_SIZE / 2;
+      ctx.fillStyle = '#228822';
+      ctx.beginPath();
+      ctx.moveTo(px, py - 15);
+      ctx.lineTo(px - 10, py + 10);
+      ctx.lineTo(px + 10, py + 10);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#553311';
+      ctx.fillRect(px - 3, py + 10, 6, 10);
+    });
+  }
+
+  // ✅ Updated drawPlayer with models for axe and pickaxe
+  function drawPlayer() {
+    const px = player.animX * TILE_SIZE + TILE_SIZE / 2;
+    const py = player.animY * TILE_SIZE + TILE_SIZE / 2;
+
+    const scale = 0.6;
+
+    ctx.strokeStyle = player.isPunching ? '#f00' : '#0f0';
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.arc(px, py - 10 * scale, 8 * scale, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(px, py - 2 * scale);
+    ctx.lineTo(px, py + 15 * scale);
+    ctx.stroke();
+
+    const frame = player.frame % 2;
+    ctx.beginPath();
+    if (frame === 0) {
+      ctx.moveTo(px - 10 * scale, py + 5 * scale); ctx.lineTo(px + 10 * scale, py + 5 * scale);
+      ctx.moveTo(px, py + 15 * scale); ctx.lineTo(px - 6 * scale, py + 30 * scale);
+      ctx.moveTo(px, py + 15 * scale); ctx.lineTo(px + 6 * scale, py + 30 * scale);
+    } else {
+      ctx.moveTo(px - 12 * scale, py + 2 * scale); ctx.lineTo(px, py + 7 * scale);
+      ctx.moveTo(px + 12 * scale, py + 2 * scale); ctx.lineTo(px, py + 7 * scale);
+      ctx.moveTo(px, py + 15 * scale); ctx.lineTo(px - 2 * scale, py + 32 * scale);
+      ctx.moveTo(px, py + 15 * scale); ctx.lineTo(px + 8 * scale, py + 28 * scale);
+    }
+    ctx.stroke();
+
+    // Sword
+    if (player.weapon === 'sword') {
+      ctx.strokeStyle = '#ff0';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(px + 10, py + 5);
+      ctx.lineTo(px + 10, py + 20);
+      ctx.stroke();
+    }
+
+    // Axe
+    if (player.tool === 'axe') {
+      ctx.strokeStyle = '#aaa';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px - 10, py + 5);
+      ctx.lineTo(px - 15, py - 10);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.strokeStyle = '#553311';
+      ctx.moveTo(px - 15, py - 10);
+      ctx.lineTo(px - 18, py - 2);
+      ctx.lineTo(px - 12, py - 2);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    // Pickaxe
+    if (player.tool === 'pickaxe') {
+      ctx.strokeStyle = '#999';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px - 10, py + 5);
+      ctx.lineTo(px - 18, py - 5);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(px - 22, py - 5);
+      ctx.lineTo(px - 14, py - 5);
+      ctx.stroke();
+    }
+  }
+
+  function movePlayer(dx, dy) {
+    if (player.movingProgress > 0) return;
+    const nx = player.x + dx;
+    const ny = player.y + dy;
+    if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) return;
+
+    player.movingFrom = { x: player.x, y: player.y };
+    player.movingTo = { x: nx, y: ny };
+    player.movingProgress = TILE_SIZE;
+    player.x = nx;
+    player.y = ny;
+  }
+
+  function updateAnimation() {
+    if (player.movingProgress > 0) {
+      player.animX += (player.movingTo.x - player.movingFrom.x) * (player.animSpeed / TILE_SIZE);
+      player.animY += (player.movingTo.y - player.movingFrom.y) * (player.animSpeed / TILE_SIZE);
+      player.movingProgress -= player.animSpeed;
+      if (player.movingProgress <= 0) {
+        player.animX = player.x;
+        player.animY = player.y;
+        player.movingProgress = 0;
+        player.frame++;
+        tryMine();
+        tryAutoMine();
+      }
+    } else {
+      player.animX = player.x;
+      player.animY = player.y;
+    }
+  }
+
+  // ✅ Modified axe to one-shot trees
+  function tryMine() {
+    for (let i = 0; i < orePositions.length; i++) {
+      if (orePositions[i].x === player.x && orePositions[i].y === player.y) {
+        if (inventory.pickaxe > 0) {
+          orePositions.splice(i, 1);
+          inventory.ore++;
+          addMessage('You mined ore!');
+          resourcesMinedSinceLastSpawn++;
+          if (resourcesMinedSinceLastSpawn >= 5) {
+            spawnOres(3);
+            spawnTrees(2);
+            resourcesMinedSinceLastSpawn = 0;
+            addMessage('More ores and trees have spawned!');
+          }
+          updateInventoryUI();
+        } else {
+          addMessage('You need a pickaxe to mine ore!');
+        }
+        return;
+      }
+    }
+
+    for (let i = 0; i < treePositions.length; i++) {
+      if (treePositions[i].x === player.x && treePositions[i].y === player.y) {
+        let damage = 1;
+        if (inventory.axe > 0) {
+          damage = treePositions[i].health; // one-shot!
+        }
+        treePositions[i].health -= damage;
+
+        player.isPunching = true;
+        setTimeout(() => {
+          player.isPunching = false;
+        }, 150);
+
+        if (treePositions[i].health <= 0) {
+          treePositions.splice(i, 1);
+          inventory.wood++;
+          addMessage('You chopped wood!');
+          updateInventoryUI();
+        } else {
+          addMessage('Keep chopping the tree!');
+        }
+        return;
+      }
+    }
+  }
+
+  function tryAutoMine() {
+    if (player.slashing) return;
+  }
+
+  function craftSword() {
+    if (inventory.ore >= 5) {
+      inventory.ore -= 5;
+      inventory.sword++;
+      player.weapon = 'sword';
+      addMessage('Crafted a sword!');
+      updateInventoryUI();
+    } else {
+      addMessage('Not enough ore to craft sword.');
+    }
+  }
+
+  function craftAxe() {
+    if (inventory.wood >= 3) {
+      inventory.wood -= 3;
+      inventory.axe++;
+      player.tool = 'axe';
+      addMessage('Crafted an axe!');
+      updateInventoryUI();
+    } else {
+      addMessage('Not enough wood to craft axe.');
+    }
+  }
+
+  function craftPickaxe() {
+    if (inventory.wood >= 3) {
+      inventory.wood -= 3;
+      inventory.pickaxe++;
+      player.tool = 'pickaxe';
+      addMessage('Crafted a pickaxe!');
+      updateInventoryUI();
+    } else {
+      addMessage('Not enough wood to craft pickaxe.');
+    }
+  }
+
+  craftSwordBtn.onclick = craftSword;
+  craftAxeBtn.onclick = craftAxe;
+  craftPickaxeBtn.onclick = craftPickaxe;
+
+  window.addEventListener('keydown', e => {
+    if (player.movingProgress > 0) return;
+    if (e.key === 'ArrowUp' || e.key === 'w') movePlayer(0, -1);
+    else if (e.key === 'ArrowDown' || e.key === 's') movePlayer(0, 1);
+    else if (e.key === 'ArrowLeft' || e.key === 'a') movePlayer(-1, 0);
+    else if (e.key === 'ArrowRight' || e.key === 'd') movePlayer(1, 0);
+    else if (e.key === ' ') {
+      if (player.weapon === 'sword') {
+        player.slashing = true;
+        setTimeout(() => { player.slashing = false; }, 300);
+      } else {
+        tryMine();
+      }
+    }
+  });
+
+  function gameLoop() {
+    updateAnimation();
+    drawTerrain();
+    drawRocks();
+    drawTrees();
+    drawPlayer();
+    requestAnimationFrame(gameLoop);
+  }
+
+  player.animX = player.x;
+  player.animY = player.y;
+
+  spawnOres(5);
+  spawnTrees(5);
+  updateInventoryUI();
+
+  gameLoop();
+})();
+</script>
+</body>
+</html>
