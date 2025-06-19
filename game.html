@@ -3,14 +3,17 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Mining Game</title>
+<title>Oreminer Game with Backpack and Inventory UI</title>
 <style>
-  body {
+  html, body {
     margin: 0;
     background: #222;
     color: #eee;
     font-family: Arial, sans-serif;
     user-select: none;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
   }
   #discordLink {
     position: fixed;
@@ -33,68 +36,147 @@
   #game {
     display: block;
     background: #333;
-    margin: 20px auto;
     border: 2px solid #555;
   }
   #inventory, #messages {
     text-align: center;
     margin: 5px;
   }
-  button {
-    margin: 5px;
+  #buttons {
+    position: fixed;
+    bottom: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.7);
+    padding: 8px;
+    border-radius: 6px;
+    font-size: 14px;
+    z-index: 1000;
+  }
+  #buttons button {
+    margin: 3px;
     padding: 6px 12px;
     font-size: 14px;
+    cursor: pointer;
   }
-  #buttons {
+  #minimap {
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    width: 150px;
+    height: 150px;
+    border: 2px solid #666;
+    background: #111;
+    z-index: 1000;
+  }
+  #toggleInventoryBtn {
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    z-index: 1001;
+    background: #663300;
+    color: #fff;
+    border: none;
+    padding: 8px 14px;
+    font-weight: bold;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+  }
+  #inventoryUI {
+    position: fixed;
+    bottom: 50px;
+    right: 10px;
+    width: 220px;
+    max-height: 300px;
+    background: rgba(50, 25, 0, 0.9);
+    border: 2px solid #663300;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 14px;
+    padding: 10px;
+    overflow-y: auto;
+    z-index: 1001;
+    display: none;
+  }
+  #inventoryUI h3 {
+    margin-top: 0;
+    font-weight: bold;
     text-align: center;
+    border-bottom: 1px solid #663300;
+    padding-bottom: 6px;
+  }
+  #inventoryUI .toolEntry {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 6px 0;
+  }
+  #inventoryUI button.equipBtn {
+    background: #663300;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 4px 8px;
+    user-select: none;
+  }
+  #inventoryUI button.equipBtn:hover {
+    background: #804000;
   }
 </style>
 </head>
 <body>
 
 <div id="discordLink">
-  Discord link: <a href="https://discord.gg/m6atea6y" target="_blank" rel="noopener noreferrer">https://discord.gg/m6atea6y</a>
+  Discord link: <a href="https://discord.gg/RT2GDT46" target="_blank" rel="noopener noreferrer">https://discord.gg/RT2GDT46</a>
 </div>
 
-<canvas id="game" width="640" height="480"></canvas>
+<canvas id="game"></canvas>
+<canvas id="minimap"></canvas>
 <div id="inventory">Empty</div>
 <div id="messages"></div>
+
 <div id="buttons">
-  <button id="craftSwordBtn">Craft Sword (5 Ore)</button>
+  <button id="craftSwordBtn">Craft Sword (2 Wood, 1 Ore)</button>
   <button id="craftAxeBtn">Craft Axe (3 Wood)</button>
   <button id="craftPickaxeBtn">Craft Pickaxe (3 Wood)</button>
+  <br>
+  <small>Switch tool: 1=Sword 2=Axe 3=Pickaxe | Use: Spacebar</small>
+</div>
+
+<button id="toggleInventoryBtn">Toggle Inventory</button>
+
+<div id="inventoryUI">
+  <h3>Inventory</h3>
+  <div id="toolsList">
+    <!-- Tools will be listed here dynamically -->
+  </div>
 </div>
 
 <script>
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
+  const minimap = document.getElementById('minimap');
+  const minimapCtx = minimap.getContext('2d');
   const inventoryEl = document.getElementById('inventory');
-  const messagesEl = document.getElementById('messages');
-  const craftSwordBtn = document.getElementById('craftSwordBtn');
-  const craftAxeBtn = document.getElementById('craftAxeBtn');
-  const craftPickaxeBtn = document.getElementById('craftPickaxeBtn');
+  const toggleInventoryBtn = document.getElementById('toggleInventoryBtn');
+  const inventoryUI = document.getElementById('inventoryUI');
+  const toolsList = document.getElementById('toolsList');
 
-  const TILE_SIZE = 40;
-  const COLS = Math.floor(canvas.width / TILE_SIZE);
-  const ROWS = Math.floor(canvas.height / TILE_SIZE);
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
 
-  const player = {
-    x: Math.floor(COLS / 2),
-    y: Math.floor(ROWS / 2),
-    animX: 0,
-    animY: 0,
-    animProgress: 0,
-    animSpeed: 4,
-    weapon: null,
-    tool: null,
-    frame: 0,
-    movingProgress: 0,
-    movingFrom: null,
-    movingTo: null,
-    slashing: false,
-    isPunching: false
-  };
+  const TILE_SIZE = 50;  // Zoom level
+
+  const MAP_COLS = 100;
+  const MAP_ROWS = 100;
+
+  const orePositions = [];
+  const treePositions = [];
+  const lakePositions = [];
+  const branchPositions = [];
+  const treeHits = {};
 
   const inventory = {
     ore: 0,
@@ -104,310 +186,463 @@
     pickaxe: 0
   };
 
-  const orePositions = [];
-  const treePositions = [];
+  const player = {
+    x: 50,
+    y: 50,
+    vx: 0,
+    vy: 0,
+    speed: 0.12,
+    tool: null,
+  };
 
-  let resourcesMinedSinceLastSpawn = 0;
+  const camera = { x: 0, y: 0 };
 
-  function addMessage(msg) {
-    messagesEl.textContent = msg;
+  const swingDuration = 300;
+  let swingStartTime = 0;
+  let swinging = false;
+
+  const flashHits = {};
+
+  const craftSwordBtn = document.getElementById('craftSwordBtn');
+  const craftAxeBtn = document.getElementById('craftAxeBtn');
+  const craftPickaxeBtn = document.getElementById('craftPickaxeBtn');
+
+  // Create grass pattern canvas
+  const grassPatternCanvas = document.createElement('canvas');
+  grassPatternCanvas.width = 20;
+  grassPatternCanvas.height = 20;
+  const gctx = grassPatternCanvas.getContext('2d');
+
+  function drawGrassTexture() {
+    gctx.fillStyle = '#3a6d1a'; // base green
+    gctx.fillRect(0, 0, 20, 20);
+
+    // Draw simple blades of grass (lines)
+    gctx.strokeStyle = '#4caf50';
+    gctx.lineWidth = 2;
+    for(let x=2; x<=18; x+=6) {
+      gctx.beginPath();
+      gctx.moveTo(x, 20);
+      gctx.lineTo(x+2, 10);
+      gctx.stroke();
+
+      gctx.beginPath();
+      gctx.moveTo(x+3, 20);
+      gctx.lineTo(x+5, 12);
+      gctx.stroke();
+    }
+  }
+  drawGrassTexture();
+
+  const grassPattern = ctx.createPattern(grassPatternCanvas, 'repeat');
+
+  function updateCamera() {
+    camera.x += (player.x - camera.x - canvas.width / TILE_SIZE / 2) * 0.1;
+    camera.y += (player.y - camera.y - canvas.height / TILE_SIZE / 2) * 0.1;
+  }
+
+  function spawn(items, count) {
+    while (items.length < count) {
+      const x = Math.floor(Math.random() * MAP_COLS);
+      const y = Math.floor(Math.random() * MAP_ROWS);
+      items.push({ x, y });
+    }
   }
 
   function updateInventoryUI() {
-    const items = [];
-    for (let k in inventory) {
-      if (inventory[k] > 0) items.push(`${k} x${inventory[k]}`);
+    const parts = [];
+    for (const key in inventory) {
+      if (inventory[key] > 0) parts.push(`${key} x${inventory[key]}`);
     }
-    inventoryEl.textContent = items.join(', ') || 'Empty';
+    inventoryEl.textContent = parts.length ? parts.join(', ') : 'Empty';
   }
 
-  function spawnOres(count) {
-    while (orePositions.length < count) {
-      const x = Math.floor(Math.random() * COLS);
-      const y = Math.floor(Math.random() * ROWS);
-      if ((x === player.x && y === player.y) ||
-          orePositions.some(o => o.x === x && o.y === y) ||
-          treePositions.some(t => t.x === x && t.y === y)) continue;
-      orePositions.push({ x, y });
+  function updateToolsList() {
+    // Clear
+    toolsList.innerHTML = '';
+    // Check if player has any tools crafted
+    const tools = ['sword', 'axe', 'pickaxe'];
+    const ownedTools = tools.filter(t => inventory[t] > 0);
+    if (ownedTools.length === 0) {
+      const noToolsMsg = document.createElement('div');
+      noToolsMsg.textContent = 'No tools crafted';
+      noToolsMsg.style.textAlign = 'center';
+      toolsList.appendChild(noToolsMsg);
+      return;
     }
-  }
+    ownedTools.forEach(tool => {
+      const entry = document.createElement('div');
+      entry.className = 'toolEntry';
 
-  function spawnTrees(count) {
-    while (treePositions.length < count) {
-      const x = Math.floor(Math.random() * COLS);
-      const y = Math.floor(Math.random() * ROWS);
-      if ((x === player.x && y === player.y) ||
-          orePositions.some(o => o.x === x && o.y === y) ||
-          treePositions.some(t => t.x === x && t.y === y)) continue;
-      treePositions.push({ x, y, health: 3 });
-    }
-  }
+      const label = document.createElement('span');
+      label.textContent = `${tool.charAt(0).toUpperCase() + tool.slice(1)} x${inventory[tool]}`;
 
-  function drawTerrain() {
-    ctx.fillStyle = '#445522';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
+      const btn = document.createElement('button');
+      btn.className = 'equipBtn';
 
-  function drawRocks() {
-    ctx.fillStyle = '#666666';
-    orePositions.forEach(ore => {
-      const px = ore.x * TILE_SIZE + TILE_SIZE / 2;
-      const py = ore.y * TILE_SIZE + TILE_SIZE / 2;
-      ctx.beginPath();
-      ctx.arc(px, py, 15, 0, Math.PI * 2);
-      ctx.fill();
+      // Set button text based on if tool is currently equipped
+      if (player.tool === tool) {
+        btn.textContent = 'Unequip';
+      } else {
+        btn.textContent = 'Equip';
+      }
+
+      btn.onclick = () => {
+        if (player.tool === tool) {
+          // Unequip
+          player.tool = null;
+        } else {
+          // Equip this tool
+          player.tool = tool;
+        }
+        updateToolsList();
+      };
+
+      entry.appendChild(label);
+      entry.appendChild(btn);
+      toolsList.appendChild(entry);
     });
   }
 
-  function drawTrees() {
-    treePositions.forEach(tree => {
-      const px = tree.x * TILE_SIZE + TILE_SIZE / 2;
-      const py = tree.y * TILE_SIZE + TILE_SIZE / 2;
-      ctx.fillStyle = '#228822';
+  function isFlashing(x, y) {
+    const key = `${x},${y}`;
+    if (!flashHits[key]) return false;
+    return (performance.now() - flashHits[key]) < 400;
+  }
+
+  function drawMap() {
+    // Draw grass texture background
+    ctx.fillStyle = grassPattern;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    lakePositions.forEach(p => {
+      const px = (p.x - camera.x) * TILE_SIZE;
+      const py = (p.y - camera.y) * TILE_SIZE;
+      ctx.fillStyle = '#2244aa';
       ctx.beginPath();
-      ctx.moveTo(px, py - 15);
-      ctx.lineTo(px - 10, py + 10);
-      ctx.lineTo(px + 10, py + 10);
-      ctx.closePath();
+      ctx.arc(px + TILE_SIZE / 2, py + TILE_SIZE / 2, TILE_SIZE * 0.8, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    branchPositions.forEach(p => {
+      const px = (p.x - camera.x) * TILE_SIZE;
+      const py = (p.y - camera.y) * TILE_SIZE;
+      ctx.fillStyle = '#553311';
+      ctx.fillRect(px + 10, py + 10, 20, 5);
+    });
+
+    orePositions.forEach(o => {
+      const px = (o.x - camera.x) * TILE_SIZE;
+      const py = (o.y - camera.y) * TILE_SIZE;
+      ctx.fillStyle = isFlashing(o.x, o.y) ? '#f00' : '#666';
+      ctx.beginPath();
+      ctx.arc(px + 20, py + 20, 15, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    treePositions.forEach(t => {
+      const px = (t.x - camera.x) * TILE_SIZE + TILE_SIZE / 2;
+      const py = (t.y - camera.y) * TILE_SIZE + TILE_SIZE / 2;
+      ctx.fillStyle = isFlashing(t.x, t.y) ? '#f00' : '#228822';
+
+      // Improved tree model — simple leafy shape + trunk
+      ctx.beginPath();
+      ctx.ellipse(px, py - 10, 15, 20, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#553311';
-      ctx.fillRect(px - 3, py + 10, 6, 10);
+      ctx.fillRect(px - 5, py + 5, 10, 20);
     });
   }
 
-  // ✅ Updated drawPlayer with models for axe and pickaxe
   function drawPlayer() {
-    const px = player.animX * TILE_SIZE + TILE_SIZE / 2;
-    const py = player.animY * TILE_SIZE + TILE_SIZE / 2;
+    const px = (player.x - camera.x) * TILE_SIZE + TILE_SIZE / 2;
+    const py = (player.y - camera.y) * TILE_SIZE + TILE_SIZE / 2;
+    const scale = 0.5;
 
-    const scale = 0.6;
+    // Draw brown backpack behind player body
+    ctx.fillStyle = '#663300'; // brown backpack
+    ctx.fillRect(px - 10 * scale, py + 2 * scale, 15 * scale, 20 * scale);
 
-    ctx.strokeStyle = player.isPunching ? '#f00' : '#0f0';
+    const walkingSpeed = Math.sqrt(player.vx * player.vx + player.vy * player.vy);
+    const walkTime = performance.now() / 150;
+    const legSwing = walkingSpeed > 0.01 ? Math.sin(walkTime * 6) * 5 : 0;
+
+    const now = performance.now();
+    let swingProgress = 0;
+    if (swinging) {
+      swingProgress = Math.min(1, (now - swingStartTime) / swingDuration);
+      if (swingProgress >= 1) swinging = false;
+    }
+    const swingAngle = Math.sin(swingProgress * Math.PI) * (Math.PI / 4);
+
+    ctx.strokeStyle = swinging ? '#f00' : '#0f0';
     ctx.lineWidth = 2;
 
+    // Head
     ctx.beginPath();
     ctx.arc(px, py - 10 * scale, 8 * scale, 0, Math.PI * 2);
     ctx.stroke();
 
+    // Body
     ctx.beginPath();
     ctx.moveTo(px, py - 2 * scale);
     ctx.lineTo(px, py + 15 * scale);
     ctx.stroke();
 
-    const frame = player.frame % 2;
+    // Arms
     ctx.beginPath();
-    if (frame === 0) {
-      ctx.moveTo(px - 10 * scale, py + 5 * scale); ctx.lineTo(px + 10 * scale, py + 5 * scale);
-      ctx.moveTo(px, py + 15 * scale); ctx.lineTo(px - 6 * scale, py + 30 * scale);
-      ctx.moveTo(px, py + 15 * scale); ctx.lineTo(px + 6 * scale, py + 30 * scale);
-    } else {
-      ctx.moveTo(px - 12 * scale, py + 2 * scale); ctx.lineTo(px, py + 7 * scale);
-      ctx.moveTo(px + 12 * scale, py + 2 * scale); ctx.lineTo(px, py + 7 * scale);
-      ctx.moveTo(px, py + 15 * scale); ctx.lineTo(px - 2 * scale, py + 32 * scale);
-      ctx.moveTo(px, py + 15 * scale); ctx.lineTo(px + 8 * scale, py + 28 * scale);
-    }
+    ctx.moveTo(px, py + 2 * scale);
+    ctx.lineTo(px - 8 * scale, py + 10 * scale);
     ctx.stroke();
 
-    // Sword
-    if (player.weapon === 'sword') {
-      ctx.strokeStyle = '#ff0';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(px + 10, py + 5);
-      ctx.lineTo(px + 10, py + 20);
-      ctx.stroke();
-    }
+    ctx.beginPath();
+    ctx.moveTo(px, py + 2 * scale);
+    ctx.lineTo(px + 8 * scale, py + 10 * scale);
+    ctx.stroke();
 
-    // Axe
-    if (player.tool === 'axe') {
-      ctx.strokeStyle = '#aaa';
-      ctx.lineWidth = 2;
+    // Legs with walking animation
+    ctx.beginPath();
+    ctx.moveTo(px, py + 15 * scale);
+    ctx.lineTo(px - 5 * scale, py + 25 * scale + legSwing);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(px, py + 15 * scale);
+    ctx.lineTo(px + 5 * scale, py + 25 * scale - legSwing);
+    ctx.stroke();
+
+    if (!player.tool) return;
+
+    ctx.save();
+    ctx.translate(px + 10 * scale, py);
+    ctx.rotate(player.tool ? -swingAngle : 0);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 3;
+
+    // Tool models, more natural shapes:
+
+    if (player.tool === 'sword') {
+      // Simple sword blade + handle
       ctx.beginPath();
-      ctx.moveTo(px - 10, py + 5);
-      ctx.lineTo(px - 15, py - 10);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.strokeStyle = '#553311';
-      ctx.moveTo(px - 15, py - 10);
-      ctx.lineTo(px - 18, py - 2);
-      ctx.lineTo(px - 12, py - 2);
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, -20 * scale);
+      ctx.lineTo(3 * scale, -17 * scale);
+      ctx.lineTo(-3 * scale, -17 * scale);
       ctx.closePath();
       ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(-2 * scale, 0);
+      ctx.lineTo(2 * scale, 0);
+      ctx.stroke();
+    } else if (player.tool === 'axe') {
+      // Axe head + handle
+      ctx.beginPath();
+      ctx.moveTo(0, -10 * scale);
+      ctx.lineTo(10 * scale, -15 * scale);
+      ctx.lineTo(10 * scale, -5 * scale);
+      ctx.closePath();
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, -10 * scale);
+      ctx.stroke();
+    } else if (player.tool === 'pickaxe') {
+      // Pickaxe head + handle
+      ctx.beginPath();
+      ctx.moveTo(0, -10 * scale);
+      ctx.lineTo(10 * scale, -5 * scale);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(-10 * scale, -5 * scale);
+      ctx.closePath();
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, -10 * scale);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function useTool() {
+    if (!player.tool) return;
+    const tx = Math.round(player.x);
+    const ty = Math.round(player.y);
+
+    function hit(arr, pos, remove = false) {
+      for (let i = 0; i < arr.length; i++) {
+        if (arr[i].x === pos.x && arr[i].y === pos.y) {
+          if (remove) arr.splice(i, 1);
+          return true;
+        }
+      }
+      return false;
     }
 
-    // Pickaxe
+    swinging = true;
+    swingStartTime = performance.now();
+
     if (player.tool === 'pickaxe') {
-      ctx.strokeStyle = '#999';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(px - 10, py + 5);
-      ctx.lineTo(px - 18, py - 5);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(px - 22, py - 5);
-      ctx.lineTo(px - 14, py - 5);
-      ctx.stroke();
-    }
-  }
-
-  function movePlayer(dx, dy) {
-    if (player.movingProgress > 0) return;
-    const nx = player.x + dx;
-    const ny = player.y + dy;
-    if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) return;
-
-    player.movingFrom = { x: player.x, y: player.y };
-    player.movingTo = { x: nx, y: ny };
-    player.movingProgress = TILE_SIZE;
-    player.x = nx;
-    player.y = ny;
-  }
-
-  function updateAnimation() {
-    if (player.movingProgress > 0) {
-      player.animX += (player.movingTo.x - player.movingFrom.x) * (player.animSpeed / TILE_SIZE);
-      player.animY += (player.movingTo.y - player.movingFrom.y) * (player.animSpeed / TILE_SIZE);
-      player.movingProgress -= player.animSpeed;
-      if (player.movingProgress <= 0) {
-        player.animX = player.x;
-        player.animY = player.y;
-        player.movingProgress = 0;
-        player.frame++;
-        tryMine();
-        tryAutoMine();
+      if (hit(orePositions, { x: tx, y: ty }, true)) {
+        inventory.ore++;
+        flashHits[`${tx},${ty}`] = performance.now();
       }
-    } else {
-      player.animX = player.x;
-      player.animY = player.y;
+    } else if (player.tool === 'axe') {
+      if (hit(treePositions, { x: tx, y: ty }, true)) {
+        inventory.wood++;
+        flashHits[`${tx},${ty}`] = performance.now();
+      }
+    } else if (player.tool === 'sword') {
+      // sword swing animation only, no damage to trees or ore
     }
+    updateInventoryUI();
   }
 
-  // ✅ Modified axe to one-shot trees
-  function tryMine() {
-    for (let i = 0; i < orePositions.length; i++) {
-      if (orePositions[i].x === player.x && orePositions[i].y === player.y) {
-        if (inventory.pickaxe > 0) {
-          orePositions.splice(i, 1);
-          inventory.ore++;
-          addMessage('You mined ore!');
-          resourcesMinedSinceLastSpawn++;
-          if (resourcesMinedSinceLastSpawn >= 5) {
-            spawnOres(3);
-            spawnTrees(2);
-            resourcesMinedSinceLastSpawn = 0;
-            addMessage('More ores and trees have spawned!');
+  window.addEventListener('keydown', e => {
+    if (e.key === ' ') {
+      useTool();
+      e.preventDefault();
+      return;
+    }
+    if (e.key === '1') player.tool = inventory.sword > 0 ? 'sword' : null;
+    else if (e.key === '2') player.tool = inventory.axe > 0 ? 'axe' : null;
+    else if (e.key === '3') player.tool = inventory.pickaxe > 0 ? 'pickaxe' : null;
+
+    if (['w', 'a', 's', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      if (e.key === 'w' || e.key === 'ArrowUp') player.vy = -player.speed;
+      if (e.key === 's' || e.key === 'ArrowDown') player.vy = player.speed;
+      if (e.key === 'a' || e.key === 'ArrowLeft') player.vx = -player.speed;
+      if (e.key === 'd' || e.key === 'ArrowRight') player.vx = player.speed;
+    }
+  });
+
+  window.addEventListener('keyup', e => {
+    if (['w', 's', 'ArrowUp', 'ArrowDown'].includes(e.key)) player.vy = 0;
+    if (['a', 'd', 'ArrowLeft', 'ArrowRight'].includes(e.key)) player.vx = 0;
+  });
+
+  function handleTreeHits() {
+    const tx = Math.round(player.x);
+    const ty = Math.round(player.y);
+    const key = `${tx},${ty}`;
+
+    for (const tree of treePositions) {
+      if (tree.x === tx && tree.y === ty) {
+        flashHits[key] = performance.now();
+        if (player.tool === 'axe') {
+          // With axe, break immediately on one hit
+          const index = treePositions.findIndex(t => t.x === tx && t.y === ty);
+          if (index !== -1) {
+            treePositions.splice(index, 1);
+            inventory.wood++;
+            updateInventoryUI();
           }
-          updateInventoryUI();
+          treeHits[key] = 0; // reset
         } else {
-          addMessage('You need a pickaxe to mine ore!');
+          // Without axe, increment hit count, break on 3 hits
+          treeHits[key] = (treeHits[key] || 0) + 1;
+          if (treeHits[key] >= 3) {
+            const index = treePositions.findIndex(t => t.x === tx && t.y === ty);
+            if (index !== -1) {
+              treePositions.splice(index, 1);
+              inventory.wood++;
+              updateInventoryUI();
+            }
+            treeHits[key] = 0;
+          }
         }
-        return;
-      }
-    }
-
-    for (let i = 0; i < treePositions.length; i++) {
-      if (treePositions[i].x === player.x && treePositions[i].y === player.y) {
-        let damage = 1;
-        if (inventory.axe > 0) {
-          damage = treePositions[i].health; // one-shot!
-        }
-        treePositions[i].health -= damage;
-
-        player.isPunching = true;
-        setTimeout(() => {
-          player.isPunching = false;
-        }, 150);
-
-        if (treePositions[i].health <= 0) {
-          treePositions.splice(i, 1);
-          inventory.wood++;
-          addMessage('You chopped wood!');
-          updateInventoryUI();
-        } else {
-          addMessage('Keep chopping the tree!');
-        }
-        return;
+        break;
       }
     }
   }
 
-  function tryAutoMine() {
-    if (player.slashing) return;
-  }
-
-  function craftSword() {
-    if (inventory.ore >= 5) {
-      inventory.ore -= 5;
+  craftSwordBtn.onclick = () => {
+    if (inventory.wood >= 2 && inventory.ore >= 1) {
+      inventory.wood -= 2;
+      inventory.ore -= 1;
       inventory.sword++;
-      player.weapon = 'sword';
-      addMessage('Crafted a sword!');
+      player.tool = 'sword';
       updateInventoryUI();
-    } else {
-      addMessage('Not enough ore to craft sword.');
+      updateToolsList();
     }
-  }
-
-  function craftAxe() {
+  };
+  craftAxeBtn.onclick = () => {
     if (inventory.wood >= 3) {
       inventory.wood -= 3;
       inventory.axe++;
       player.tool = 'axe';
-      addMessage('Crafted an axe!');
       updateInventoryUI();
-    } else {
-      addMessage('Not enough wood to craft axe.');
+      updateToolsList();
     }
-  }
-
-  function craftPickaxe() {
+  };
+  craftPickaxeBtn.onclick = () => {
     if (inventory.wood >= 3) {
       inventory.wood -= 3;
       inventory.pickaxe++;
       player.tool = 'pickaxe';
-      addMessage('Crafted a pickaxe!');
       updateInventoryUI();
-    } else {
-      addMessage('Not enough wood to craft pickaxe.');
+      updateToolsList();
     }
+  };
+
+  toggleInventoryBtn.onclick = () => {
+    if (inventoryUI.style.display === 'none' || inventoryUI.style.display === '') {
+      inventoryUI.style.display = 'block';
+      updateToolsList();
+    } else {
+      inventoryUI.style.display = 'none';
+    }
+  };
+
+  function drawMinimap() {
+    minimapCtx.clearRect(0, 0, minimap.width, minimap.height);
+    minimapCtx.fillStyle = '#333';
+    minimapCtx.fillRect(0, 0, minimap.width, minimap.height);
+
+    const scaleX = minimap.width / MAP_COLS;
+    const scaleY = minimap.height / MAP_ROWS;
+
+    orePositions.forEach(o => {
+      minimapCtx.fillStyle = '#ccc';
+      minimapCtx.fillRect(o.x * scaleX, o.y * scaleY, 2, 2);
+    });
+    treePositions.forEach(t => {
+      minimapCtx.fillStyle = '#2f2';
+      minimapCtx.fillRect(t.x * scaleX, t.y * scaleY, 2, 2);
+    });
+    minimapCtx.fillStyle = '#f00';
+    minimapCtx.fillRect(player.x * scaleX - 2, player.y * scaleY - 2, 4, 4);
   }
 
-  craftSwordBtn.onclick = craftSword;
-  craftAxeBtn.onclick = craftAxe;
-  craftPickaxeBtn.onclick = craftPickaxe;
-
-  window.addEventListener('keydown', e => {
-    if (player.movingProgress > 0) return;
-    if (e.key === 'ArrowUp' || e.key === 'w') movePlayer(0, -1);
-    else if (e.key === 'ArrowDown' || e.key === 's') movePlayer(0, 1);
-    else if (e.key === 'ArrowLeft' || e.key === 'a') movePlayer(-1, 0);
-    else if (e.key === 'ArrowRight' || e.key === 'd') movePlayer(1, 0);
-    else if (e.key === ' ') {
-      if (player.weapon === 'sword') {
-        player.slashing = true;
-        setTimeout(() => { player.slashing = false; }, 300);
-      } else {
-        tryMine();
-      }
-    }
-  });
-
   function gameLoop() {
-    updateAnimation();
-    drawTerrain();
-    drawRocks();
-    drawTrees();
+    player.x += player.vx;
+    player.y += player.vy;
+
+    // Clamp player inside map
+    player.x = Math.max(0, Math.min(MAP_COLS - 0.01, player.x));
+    player.y = Math.max(0, Math.min(MAP_ROWS - 0.01, player.y));
+
+    handleTreeHits();
+
+    updateCamera();
+    drawMap();
     drawPlayer();
+    drawMinimap();
+
     requestAnimationFrame(gameLoop);
   }
 
-  player.animX = player.x;
-  player.animY = player.y;
+  spawn(orePositions, 100);
+  spawn(treePositions, 100);
+  spawn(lakePositions, 10);
+  spawn(branchPositions, 40);
 
-  spawnOres(5);
-  spawnTrees(5);
   updateInventoryUI();
 
   gameLoop();
+
 })();
 </script>
 </body>
